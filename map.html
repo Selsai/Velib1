@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Carte des stations Velib</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <style>
+        #map { height:100vh; }
+        .velib-marker-icon {
+            background-size: contain;
+            width: 25px;
+            height: 41px;
+        }
+    </style>
+</head>
+<body>
+    <form id="addressForm">
+        <input type="text" id="addressInput" placeholder="Entrez une adresse sur Paris" />
+        <button type="submit">Rechercher</button>
+    </form>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script>
+        var map = L.map('map');
+
+        // Velib Marqueurs //
+        function addVelibMarkers(velibData) {
+            velibData.forEach(function(station) {
+                L.marker([station.latitude, station.longitude], { icon: L.divIcon({ className: 'velib-marker-icon' }) }).addTo(map)
+                    .bindPopup(station.name);
+            });
+        }
+
+        // Calculer distance entre deux points //
+        function distanceEntrePoints(lat1, lon1, lat2, lon2) {
+            var R = 6371; // (Rayon Terre en km)
+            var dLat = (lat2 - lat1) * Math.PI / 180;
+            var dLon = (lon2 - lon1) * Math.PI / 180;
+            var a =
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            var distance = R * c;
+            return distance;
+        }
+
+        function onLocationFound(e) {
+            var userCoords = e.latlng;
+            map.setView(userCoords, 14);
+
+            // Notre position//
+            L.marker(userCoords).addTo(map)
+                .bindPopup("Votre position");
+
+            // Fetch Velibdata//
+            fetch('/get_velib_data')
+                .then(response => response.json())
+                .then(velibData => addVelibMarkers(velibData))
+                .catch(error => console.error("Erreur lors du chargement des données Velib:", error));
+        }
+
+        function onLocationError(e) {
+            alert(e.message);
+        }
+
+        function searchAddress(e) {
+    e.preventDefault();
+    var address = document.getElementById('addressInput').value;
+    if (address.trim() === '') {
+        alert("Veuillez entrer une adresse.");
+        return;
+    }
+
+    fetch('https://nominatim.openstreetmap.org/search?q=' + encodeURIComponent(address) + '&format=json')
+        .then(response => response.json())
+        .then(data => {
+            if (data.length > 0) {
+                var addressCoords = [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+                map.setView(addressCoords, 14);
+
+                // Marqueur //
+                L.marker(addressCoords).addTo(map)
+                    .bindPopup(address);
+
+                // Fetch //
+                fetch('/get_velib_data')
+                    .then(response => response.json())
+                    .then(velibData => {
+                        var filteredVelibData = velibData.filter(station => distanceEntrePoints(station.latitude, station.longitude, addressCoords[0], addressCoords[1]) <= 1); // 1 km radius
+                        
+                        // Marqueur Vélib //
+                        filteredVelibData.forEach(station => {
+                            L.marker([station.latitude, station.longitude], {
+                                icon: L.icon({
+                                    iconUrl: 'https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+                                    iconSize: [25, 41],
+                                    iconAnchor: [12, 41],
+                                    popupAnchor: [1, -34],
+                                    shadowSize: [41, 41]
+                                })
+                            }).addTo(map).bindPopup(station.name);
+                        });
+                    })
+                    .catch(error => console.error("Erreur lors du chargement des données Velib:", error));
+            } else {
+                alert("Adresse non trouvée. Veuillez entrer une adresse valide.");
+            }
+        })
+        .catch(error => {
+            console.error("Une erreur s'est produite lors de la recherche d'adresse:", error);
+        });
+}
+
+
+        map.on('locationfound', onLocationFound);
+        map.on('locationerror', onLocationError);
+
+        map.locate({setView: true, maxZoom: 16});
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+        }).addTo(map);
+
+        document.getElementById('addressForm').addEventListener('submit', searchAddress);
+    </script>
+</body>
+</html>
